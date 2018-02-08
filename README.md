@@ -26,6 +26,7 @@ See also
 --------
 
 https://cymmetria.com/blog/honeypots-for-oracle-vulnerabilities/
+
 http://www.cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2018-2636
 
 Please consider trying out the MazeRunner Community Edition, the free version of our cyber deception platform.
