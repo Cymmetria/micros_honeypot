@@ -15,11 +15,22 @@ It is released under the MIT license for the use of the community, pull requests
 
 # Usage
 
-* Run without parameters to listen on default port (8080):
-
-    > python micros_server.py
-
-* Run with --help to see other command line parameters
+    Usage: micros_server.py [OPTIONS]
+    
+      Low interaction honeypot for Oracle MICROS Point-of-Sale that is able to
+      detect CVE-2018-2636, a directory traversal vulnerability
+    
+    Options:
+      -h, --host TEXT     Host to listen
+      -p, --port INTEGER  Port to listen
+      -v, --verbose       Verbose logging
+      --hpfserver TEXT    hpfeeds Server
+      --hpfport INTEGER   hpfeeds Port
+      --hpfident TEXT     hpfeeds Ident
+      --hpfsecret TEXT    hpfeeds Secret
+      --hpfchannel TEXT   hpfeeds Channel
+      --serverid TEXT     hpfeeds ServerID/ServerName
+      --help              Show this message and exit.
 
 
 See also
