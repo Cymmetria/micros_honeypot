@@ -5,9 +5,9 @@ import string
 import random
 import socket
 import logging
-from SocketServer import ThreadingMixIn
-from BaseHTTPServer import HTTPServer
-from SimpleHTTPServer import SimpleHTTPRequestHandler
+from socketserver import ThreadingMixIn
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import binascii
 
 
 class NonBlockingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -85,14 +85,14 @@ class MicrosHandler(SimpleHTTPRequestHandler):
         data_len = int(self.headers.get('Content-length', 0))
         if self.headers.get('Content-type') == 'application/dime':
             if data_len:
-                data = self.rfile.read(data_len).encode('hex') if data_len else ''
+                data = self.rfile.read(data_len).hex() if data_len else ''
 
                 exploit_data = [self.poc_suf_1_1, self.poc_suf_1_ses, self.poc_suf_1_2, self.poc_suf_1_3,
                                 self.poc_suf_1_4, self.poc_suf2]
                 if all(data.count(x.lower()) for x in exploit_data):
                     # request is asking for a specific file
                     filepath = data[data.find(self.poc_suf_1_4):data.find(self.poc_suf2)]
-                    filepath = filepath.decode('hex').replace('\x00', '')[2:]
+                    filepath = binascii.unhexlify(filepath).decode('utf-8').replace('\x00', '')[2:]
                     self.send_file(filepath)
 
                 elif data == self.log_list:
@@ -120,7 +120,7 @@ class MicrosHandler(SimpleHTTPRequestHandler):
     def send_file(self, filepath):
         self.alert_function(request=self, filepath=filepath)
         filename = os.path.basename(filepath.replace('\\', '/'))
-        rnd = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(16)).encode('hex')
+        rnd = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(16)).encode('utf-8').hex()
         head = '0c200000001000290000016d'
         soap = '687474703a2f2f736368656d61732e786d6c736f61702e6f72672f736f61702f656e76656c6f70652f0000003c3f786d6c207' \
                '6657273696f6e3d22312e302220656e636f64696e673d227574662d38223f3e3c736f61703a456e76656c6f706520786d6c6e' \
@@ -136,13 +136,13 @@ class MicrosHandler(SimpleHTTPRequestHandler):
                  '50072006900740079002000560065007200730069006f006e003d0022003200220020002f003e'
 
         try:
-            with open(os.path.dirname(os.path.abspath(__file__)) + '/micros/' + filename, 'rb') as fh:
+            with open(os.path.dirname(os.path.abspath(__file__)) + '/micros/' + filename) as fh:
                 data = fh.read()
         except IOError:
-            with open(os.path.dirname(os.path.abspath(__file__)) + '/micros/404', 'rb') as fh:
+            with open(os.path.dirname(os.path.abspath(__file__)) + '/micros/404') as fh:
                 data = fh.read()
 
-        body = (head + rnd + soap + rnd + si_sec).decode('hex') + data
+        body = (head + rnd + soap + rnd + si_sec) + data
         body = body.replace('%%HOST%%', self.headers.get('Host').split(':')[0])
         body = body.replace('%%PORT%%', str(self.listening_port))
 
@@ -150,7 +150,7 @@ class MicrosHandler(SimpleHTTPRequestHandler):
         self.send_header('Content-Type', 'application/dime')
         self.send_header('Content-Length', int(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        self.wfile.write(body.encode('utf-8'))
 
     def log_message(self, format, *args):
         self.logger.debug("%s - - [%s] %s" %
@@ -185,7 +185,7 @@ class MicrosHandler(SimpleHTTPRequestHandler):
             method = getattr(self, mname)
             method()
             self.wfile.flush()  # actually send the response if not already done.
-        except socket.timeout, e:
+        except socket.timeout as e:
             # a read or a write timed out.  Discard this connection
             self.log_error("Request timed out: %r", e)
             self.close_connection = 1
@@ -232,3 +232,4 @@ if __name__ == '__main__':
         httpd.server_close()
 
     start()
+
