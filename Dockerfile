@@ -1,11 +1,27 @@
-FROM python:2-alpine
+# Build stage
+FROM alpine:3.6 AS builder
 
-COPY requirements.txt /usr/src/app/requirements.txt
-WORKDIR /usr/src/app
-RUN pip install --no-cache -r requirements.txt
+RUN apk add --no-cache python3
+	
+RUN python3 -m venv /app
 
-COPY . /usr/src/app/
+COPY . /app/src/
 
+RUN /app/bin/pip install -r /app/src/requirements.txt
+RUN chown -R nobody:nobody /app
+
+
+# Prod stage
+FROM alpine:3.6
+
+RUN apk add --no-cache python3
+
+COPY --from=builder /app /app
+
+WORKDIR /app/micros_honeypot
 EXPOSE 8080
+USER nobody
 
-CMD ['python', 'micros_server.py']
+ENV PYTHONUNBUFFERED=1
+
+CMD ["/app/bin/python3", "micros_server.py", "--verbose"]
