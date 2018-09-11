@@ -18,10 +18,8 @@ RUN apk add --no-cache python3
 
 COPY --from=builder /app /app
 
-WORKDIR /app/micros_honeypot
+WORKDIR /app/src
 EXPOSE 8080
-USER nobody
-
 ENV PYTHONUNBUFFERED=1
 
 CMD ["/app/bin/python3", "micros_server.py", "--verbose"]
