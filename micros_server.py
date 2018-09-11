@@ -5,28 +5,63 @@ import string
 import random
 import socket
 import logging
-from SocketServer import ThreadingMixIn
-from BaseHTTPServer import HTTPServer
-from SimpleHTTPServer import SimpleHTTPRequestHandler
+from socketserver import ThreadingMixIn
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import binascii
+import datetime
+import json
 
 
 class NonBlockingHTTPServer(ThreadingMixIn, HTTPServer):
     pass
 
 
+class hpflogger:
+    def __init__(self, hpfserver, hpfport, hpfident, hpfsecret, hpfchannel, serverid, verbose):
+        self.hpfserver = hpfserver
+        self.hpfport = hpfport
+        self.hpfident = hpfident
+        self.hpfsecret = hpfsecret
+        self.hpfchannel = hpfchannel
+        self.serverid = serverid
+        self.hpc = None
+        self.verbose = verbose
+        if (self.hpfserver and self.hpfport and self.hpfident and self.hpfport and self.hpfchannel and self.serverid):
+            import hpfeeds
+            import hpfeeds
+            try:
+                self.hpc = hpfeeds.new(self.hpfserver, self.hpfport, self.hpfident, self.hpfsecret)
+                logger.debug("Logging to hpfeeds using server: {0}, channel {1}.".format(self.hpfserver, self.hpfchannel))
+            except (hpfeeds.FeedException, socket.error, hpfeeds.Disconnect):
+                logger.critical('hpfeeds connection not successful')
+    def log(self, level, message):
+        if self.hpc:
+            if level in ['debug', 'info'] and not self.verbose:
+                return
+            message['serverid'] = self.serverid
+            self.hpc.publish(self.hpfchannel, json.dumps(message))
+
+
 class MicrosHandler(SimpleHTTPRequestHandler):
     logger = None
     alert_function = None
     listening_port = None
+    hpfl = None
+    data = None
+    timestamp = None
+    req_classification = 'request'
+    req_category = 'info'
+    vulnerability = None
+    file_path = None
 
     protocol_version = "HTTP/1.1"
 
     # The following consts are taken from an online exploitation for CVE-2018-2636
-    poc_suf_1_1 = '0A100000001000180000'
+    poc_suf_1_1 = '0a100000001000180000'
     poc_suf_1_ses = '66497a3263516c56444c35305045356e'
-    poc_suf_1_2 = '6170706C69636174696F6E2F6F637465742D73747265616D01E11E02000000360000003C00530049002D00530065006300' \
-                  '750072006900740079002000560065007200730069006F006E003D0022003200220020002F003E00C2AF00000000000000' \
-                  '00000001C11C0100000001D11D8EBA0000B13600000100000000000000000000001E000000'
+    poc_suf_1_2 = '6170706c69636174696f6e2f6f637465742d73747265616d01e11e02000000360000003c00530049002d00530065006300' \
+                  '750072006900740079002000560065007200730069006f006e003d0022003200220020002f003e00c2af00000000000000' \
+                  '00000001c11c0100000001d11d8eba0000b13600000100000000000000000000001e000000'
     poc_suf_1_3 = '00000006000000'
     poc_suf_1_4 = '000000240024'
     poc_suf2 = '001dd1021cc1021ee102'
@@ -85,23 +120,24 @@ class MicrosHandler(SimpleHTTPRequestHandler):
         data_len = int(self.headers.get('Content-length', 0))
         if self.headers.get('Content-type') == 'application/dime':
             if data_len:
-                data = self.rfile.read(data_len).encode('hex') if data_len else ''
+                self.data = self.rfile.read(data_len) if data_len else ''
+                data_hex = binascii.hexlify(self.data).decode('utf-8')
 
                 exploit_data = [self.poc_suf_1_1, self.poc_suf_1_ses, self.poc_suf_1_2, self.poc_suf_1_3,
                                 self.poc_suf_1_4, self.poc_suf2]
-                if all(data.count(x.lower()) for x in exploit_data):
+                if all(data_hex.count(x.lower()) for x in exploit_data):
                     # request is asking for a specific file
-                    filepath = data[data.find(self.poc_suf_1_4):data.find(self.poc_suf2)]
-                    filepath = filepath.decode('hex').replace('\x00', '')[2:]
-                    self.send_file(filepath)
+                    file_path = data_hex[data_hex.find(self.poc_suf_1_4):data_hex.find(self.poc_suf2)]
+                    file_path = binascii.unhexlify(file_path).replace(b'\x00', b'')[2:].decode('utf-8')
+                    self.send_file(file_path)
 
-                elif data == self.log_list:
+                elif data_hex == self.log_list:
                     self.send_file('loglist')
 
-                elif self.micros_info in data:
+                elif self.micros_info in data_hex:
                     self.send_file('micros_info')
 
-                elif self.db_info in data:
+                elif self.db_info in data_hex:
                     self.send_file('db_info')
 
                 else:
@@ -117,10 +153,15 @@ class MicrosHandler(SimpleHTTPRequestHandler):
             self.send_header('Content-Length', 0)
             self.end_headers()
 
-    def send_file(self, filepath):
-        self.alert_function(request=self, filepath=filepath)
-        filename = os.path.basename(filepath.replace('\\', '/'))
-        rnd = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(16)).encode('hex')
+    def send_file(self, file_path):
+        self.req_classification = 'exploit'
+        self.req_category = 'critical'
+        self.vulnerability = 'CVE-2018-2636'
+        self.file_path = os.path.basename(file_path.replace('\\', '/'))
+        self.alert_function(request=self, file_path=self.file_path)
+        
+        r = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(16))
+        rnd = binascii.hexlify(r.encode('utf-8')).decode('utf-8')
         head = '0c200000001000290000016d'
         soap = '687474703a2f2f736368656d61732e786d6c736f61702e6f72672f736f61702f656e76656c6f70652f0000003c3f786d6c207' \
                '6657273696f6e3d22312e302220656e636f64696e673d227574662d38223f3e3c736f61703a456e76656c6f706520786d6c6e' \
@@ -136,15 +177,15 @@ class MicrosHandler(SimpleHTTPRequestHandler):
                  '50072006900740079002000560065007200730069006f006e003d0022003200220020002f003e'
 
         try:
-            with open(os.path.dirname(os.path.abspath(__file__)) + '/micros/' + filename, 'rb') as fh:
-                data = fh.read()
+            with open(os.path.dirname(os.path.abspath(__file__)) + '/micros/' + self.file_path, 'rb') as fh:
+                body = fh.read()
         except IOError:
             with open(os.path.dirname(os.path.abspath(__file__)) + '/micros/404', 'rb') as fh:
-                data = fh.read()
+                body = fh.read()
 
-        body = (head + rnd + soap + rnd + si_sec).decode('hex') + data
-        body = body.replace('%%HOST%%', self.headers.get('Host').split(':')[0])
-        body = body.replace('%%PORT%%', str(self.listening_port))
+        body = binascii.unhexlify(head + rnd + soap + rnd + si_sec) + body
+        body = body.replace(b'%%HOST%%', self.headers.get('Host').split(':')[0].encode('utf-8'))
+        body = body.replace(b'%%PORT%%', str(self.listening_port).encode('utf-8'))
 
         self.send_response(200)
         self.send_header('Content-Type', 'application/dime')
@@ -153,15 +194,38 @@ class MicrosHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, format, *args):
+        postdata = None
+        if self.data:
+            postdata = self.data.decode('utf-8', 'ignore')
+
         self.logger.debug("%s - - [%s] %s" %
                           (self.client_address[0],
                            self.log_date_time_string(),
                            format % args))
 
+        # hpfeeds logging
+        rheaders = {}
+        for k,v in self.headers._headers:
+            rheaders[k] = v
+        self.hpfl.log(self.req_category, {
+                      'classification': self.req_classification,
+                      'timestamp': self.timestamp,
+                      'vulnerability': self.vulnerability,
+                      'src_ip': self.client_address[0],
+                      'src_port': self.client_address[1],
+                      'dest_ip': self.connection.getsockname()[0],
+                      'dest_port': self.connection.getsockname()[1],
+                      'raw_requestline':  self.raw_requestline.decode('utf-8'),
+                      'header': rheaders,
+                      'postdata': postdata,
+                      'exploit_requested_file': self.file_path
+                    })
+
     def handle_one_request(self):
         """Handle a single HTTP request.
         Overriden to not send 501 errors
         """
+        self.timestamp = datetime.datetime.now().isoformat()
         self.close_connection = True
         try:
             self.raw_requestline = self.rfile.readline(65537)
@@ -185,7 +249,7 @@ class MicrosHandler(SimpleHTTPRequestHandler):
             method = getattr(self, mname)
             method()
             self.wfile.flush()  # actually send the response if not already done.
-        except socket.timeout, e:
+        except socket.timeout as e:
             # a read or a write timed out.  Discard this connection
             self.log_error("Request timed out: %r", e)
             self.close_connection = 1
@@ -202,16 +266,30 @@ if __name__ == '__main__':
     @click.option('-h', '--host', default='0.0.0.0', help='Host to listen')
     @click.option('-p', '--port', default=8080, help='Port to listen', type=click.INT)
     @click.option('-v', '--verbose', default=False, help='Verbose logging', is_flag=True)
-    def start(host, port, verbose):
+
+    # hpfeeds options
+    @click.option('--hpfserver', default=os.environ.get('HPFEEDS_SERVER'), help='hpfeeds Server')
+    @click.option('--hpfport', default=os.environ.get('HPFEEDS_PORT'), help='hpfeeds Port', type=click.INT)
+    @click.option('--hpfident', default=os.environ.get('HPFEEDS_IDENT'), help='hpfeeds Ident')
+    @click.option('--hpfsecret', default=os.environ.get('HPFEEDS_SECRET'), help='hpfeeds Secret')
+    @click.option('--hpfchannel', default=os.environ.get('HPFEEDS_CHANNEL'), help='hpfeeds Channel')
+    @click.option('--serverid', default=os.environ.get('SERVERID'), help='hpfeeds ServerID/ServerName')
+
+    def start(host, port, verbose, hpfserver, hpfport, hpfident, hpfsecret, hpfchannel, serverid):
         """
            Low interaction honeypot for Oracle MICROS Point-of-Sale that is able to detect CVE-2018-2636,
            a directory traversal vulnerability
         """
-        def alert(cls, request, filepath):
+        
+        hpfl = hpflogger(hpfserver, hpfport, hpfident, hpfsecret, hpfchannel, serverid, verbose)
+        
+        def alert(cls, request, file_path):
             logger.critical({
-                'src': request.client_address[0],
-                'spt': request.client_address[1],
-                'filePath': filepath
+                'src_ip': request.client_address[0],
+                'src_port': request.client_address[1],
+                'dest_ip': request.connection.getsockname()[0],
+                'dest_port': request.connection.getsockname()[1],                
+                'exploit_file_path': file_path
             })
 
         if verbose:
@@ -221,6 +299,7 @@ if __name__ == '__main__':
         requestHandler.listening_port = port
         requestHandler.alert_function = alert
         requestHandler.logger = logger
+        requestHandler.hpfl = hpfl
 
         httpd = NonBlockingHTTPServer((host, port), requestHandler)
         logger.info('Starting server on {:s}:{:d}, use <Ctrl-C> to stop'.format(host, port))
